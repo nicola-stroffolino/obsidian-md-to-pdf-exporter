@@ -1,137 +1,220 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
-
-// Remember to rename these classes and interfaces!
-
-interface MyPluginSettings {
-	mySetting: string;
-}
-
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
-}
+import { fstat, readFileSync, writeFileSync, promises as fsPromises  } from 'fs';
+import { App, Editor, MarkdownView, Modal, normalizePath, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { dirname, join } from 'path';
+import { exec } from "child_process";
 
 export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
-
+	
 	async onload() {
-		await this.loadSettings();
+		
+		const ribbonIconEl = this.addRibbonIcon('dice', 'PROVA', async (evt: MouseEvent) => {
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
+			const preamble = [
+				"\\usepackage{tikz}",
+				"\\usetikzlibrary{calc,patterns,positioning,matrix,plotmarks,trees,shapes,decorations}",
+				"\\usepackage{color,soul,soulutf8}"
+			]
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
+			const running = this.app
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
+			const { basePath } = (running.vault.adapter as any); // const { peppe } = ciao.arrivederci ---> const peppe = ciao.arrivederci.peppe
+
+			const dummy_partialPath = ".obsidian/plugins/obsidian-md-to-pdf-exporter/files/dummy.md"
+			const template_partialPath = ".obsidian/plugins/obsidian-md-to-pdf-exporter/templates/eisvogel"
+
+			
+			/* Read Active File */
+
+			let activeFile = running.workspace.getActiveFile(); // useful to get some file information with like .path
+			if (!activeFile) return console.log("No file currently open.");
+
+			let text = (await running.vault.read(activeFile)).split('\n');
+
+			new Notice(`Exporting to PDF...`);
+
+			/* Write into Dummy file */
+			const outputFilePath_complete = join(basePath, dummy_partialPath);
+			
+			await this.resetFile(outputFilePath_complete);
+			await this.writeFile(outputFilePath_complete, await this.headerize(preamble));
+			
+			let anInteger = 0;
+			let i = 0;
+			while(text[i].trim().length === 0) i++
+			if(text[i].trimStart().trimEnd() == '---')
+				text[i] = '';
+			else
+				text[i] = '---\n\n'+ text[i];
+			for (let found = false; i < text.length; i++) {
+				if (text[i].contains('`')) {
+					if (text[i].contains('tikz render')) {
+						let tmp = text[i].split(' ').last();
+						text[i] = '\\begin{center}\\begin{tikzpicture}'
+
+						if (tmp.startsWith('scale=')) text[i] += `[${tmp}, transform shape]`
+						
+						found = true
+					} else if (found && text[i].trimStart().trimEnd() == '```') {
+						text[i] = '\\end{tikzpicture}\\end{center}'
+						found = false
+					}
+				} else if (!found) {
+					text[i] = text[i].replace('<-->','$\\longleftrightarrow$');
+					text[i] = text[i].replace('<->','$\\leftrightarrow$');
+
+					text[i] = text[i].replace('--->','$\\longrightarrow$');
+					text[i] = text[i].replace('-->','$\\longrightarrow$');
+					text[i] = text[i].replace('->','$\\rightarrow$');
+
+					text[i] = text[i].replace('<---','$\\longleftarrow$');
+					text[i] = text[i].replace('<--','$\\longleftarrow$');
+					text[i] = text[i].replace('<-','$\\leftarrow$');
+					
+					
+					
+					// text[i] = this.localize(text[i],'=','=' ,'\\hl{', '}',2);
+					// text[i] = text[i].replace('==', '\\hl{');
+					// text[i] = text[i].replace('==', '}');
+					/*
+					while contains(=) == true { 
+						contains \== or contains =\= 
+						continue
+						else
+						metti i \hl{ e }
+					}
+					*/
+					let index = text[i].search("=");
+					if (index != -1) {
+						if (text[i][index] == '\\' || text[i][index + 1] == '\\') {
+							console.log(`Trovato un figlio di puttana alla riga ${i} colonna ${index}`);
+						}
+
+						
 					}
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
+					text[i] += '\n'
 				}
+				
+				await this.writeFile(outputFilePath_complete, text[i] + '\n');
 			}
+			
+
+			/* Output Written File */
+			const contents = readFileSync(outputFilePath_complete, {encoding:'utf8', flag:'r'});
+			console.log(contents);
+			
+
+			/* Execute Pandoc Command */
+			let command = ["pandoc", `"${outputFilePath_complete}"`, "-f", "markdown", "-t", "pdf", "-o", `"${basePath}/${activeFile.parent.path}${activeFile.basename}.pdf"`, "--template", `"${join(basePath, template_partialPath)}"`];
+			
+			exec(command.join(" "), (error: any, stdout: any, stderr: any) => {
+				if (error) {
+					console.log(`error: ${error.message}`);
+					new Notice(`Error: ${error.message}`);
+					return;
+				}
+				if (stderr) {
+					console.log(`stderr: ${stderr}`);
+					new Notice(`stderr: ${stderr}`);
+					return;
+				}
+				console.log(`stdout: ${stdout}`);
+				new Notice('Succesfully exported to PDF.');
+			});
 		});
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
 	}
 
 	onunload() {
 
 	}
 
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+	localize(str :string, char : string, char1 :string, start :string, end : string, charNum : number) :string{
+		let chars = [...str];
+		let call = false;
+
+		for(let r = 0, pass = 0, oldpass = 0; r < chars.length -1; r++){
+			if((chars[r] == '\\' && (chars[r+1] == char || chars[r+1] == char1 ))){
+				if(oldpass != 1)
+					pass = 1;
+				chars[r] = '';
+				// alert(chars);
+				r++;
+			}
+			else if (charNum == 2){
+				if((chars[r] == char && chars[r+1] == char) || (chars[r] == char1 && chars[r+1] == char1)){
+					oldpass = pass;
+
+					if (pass == 1){
+						pass = 0;
+					}else{
+						call = true;
+						chars[r] = start;
+						chars[++r] = '';
+						r++;
+						for(; r < chars.length -1; r++){
+							if((chars[r] == char && chars[r+1] == char) || (chars[r] == char1 && chars[r+1] == char1)){
+								chars[r] = end;
+								chars[r+1] = '';
+								break;
+							}
+						}
+					}
+				}
+			}else if(charNum == 1){
+				if(chars[r] == char){
+					oldpass = pass;
+
+					if (pass == 1){
+						pass = 0;
+					}else{
+						call = true;
+						chars[r] = start;
+						// chars[++r] = ' ';
+						r++;
+						for(; r < chars.length -1; r++){
+							if(chars[r] == char){
+								chars[r] = end;
+								// chars[r+1] = ' ';
+								break;
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		let ret = chars.join('');
+
+		if(char === '=' && call){
+			ret = this.localize(this.localize(ret, '*','_', '\\textbf{','}',2), '*','_', '\\textit{','}',1);
+		}
+		
+		return ret
+	}
+	
+	async writeFile(outputDir: string, data: any) {
+		try {
+			await fsPromises.writeFile(outputDir, data, {flag: 'a+'});
+		  	
+			return;
+		} catch (err) { return console.log(err) }
 	}
 
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-}
-
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
+	async resetFile(outputDir: string) {
+		try {
+			await fsPromises.truncate(outputDir, 0);
+		  	
+			return;
+		} catch (err) { return console.log(err) }
 	}
 
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
+	async headerize(packageArr: string[]) {
+		let header = "---\nheader-includes:\n"
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
-}
+		for(let i = 0; i < packageArr.length; i++) {
+			header += "- " + packageArr[i] + "\n"
+		}
 
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
-
-	display(): void {
-		const {containerEl} = this;
-
-		containerEl.empty();
-
-		containerEl.createEl('h2', {text: 'Settings for my awesome plugin.'});
-
-		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					console.log('Secret: ' + value);
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
+		return header
 	}
 }
